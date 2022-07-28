@@ -3,11 +3,14 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SimpleTimer.h>
+#include <SPI.h>
+#include <SD.h>
 
-SimpleTimer timer1;
+SimpleTimer secondTimer;
+SimpleTimer minuteTimer;
+SimpleTimer tenMinuteTimer;
 
 Adafruit_ADS1115 ads;
-
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -16,9 +19,7 @@ Adafruit_ADS1115 ads;
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
  long timeStart = 0;
- long lastMinCount = 0;
  long minCount = 0;
- long lastSecCount = 0;
  int16_t adc0, adc1, adc2, adc3;
  
 void setup(void) 
@@ -26,10 +27,18 @@ void setup(void)
   Serial.begin(9600);
   Wire.begin();
 
+  // Serial.print("Initializing SD card...");
+
+  // if (!SD.begin(15)) {
+  //   Serial.println("initialization failed!");
+  //   while (1);
+  // }
+  // Serial.println("initialization done.");
+
   //                                                                ADS1115
   //                                                                -------
   // ads.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit =  0.1875mV (default)    // activate this if you are using a 5V sensor, this one should  be used with Arduino boards
-  // ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit =  0.125mV               // As the sensor is powered up using 3.3V, this one should be used with 3.3v controller boards
+  ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit =  0.125mV               // As the sensor is powered up using 3.3V, this one should be used with 3.3v controller boards
   // ads.setGain(GAIN_TWO);        // 2x gain   +/- 2.048V  1 bit =  0.0625mV
   // ads.setGain(GAIN_FOUR);       // 4x gain   +/- 1.024V  1 bit =  0.03125mV
   // ads.setGain(GAIN_EIGHT);      // 8x gain   +/- 0.512V  1 bit =  0.015625mV
@@ -41,77 +50,86 @@ void setup(void)
   display.clearDisplay();
   display.setTextColor(WHITE);
 
-  timer1.setInterval(1000L, Oled_Display);
+  secondTimer.setInterval(2000L, Oled_Display);
+  minuteTimer.setInterval(60000L, nextMin);
+  tenMinuteTimer.setInterval(600000L, writeData);
   timeStart = millis();
+
 }
 
-void loop(void) 
+void loop(void) {
+  secondTimer.run();
+  minuteTimer.run();
+  tenMinuteTimer.run();
+}
+
+void Oled_Display()
 {
-if (lastMinCount == 0) {                          //Init. Only runs after first boot
-  lastMinCount = millis() + 60000;                //Set timer for 1min delay
-  lastSecCount = millis() + 1000;                 //Set timer for 1sec delay for display update
-}
-
-if (millis() > lastMinCount) {                    //Check if minute timer has expired
-  lastMinCount = millis() + 60000;                //Set timer for 1min delay
-  minCount ++;                                    //Increment minute counter
-
-}
-
-if (millis() > lastSecCount) {                    //Check if second timer has expired
-  lastSecCount = millis() + 1000;                 //Set timer for 1sec delay
-  timer1.run();                                   
   adc0 = ads.readADC_SingleEnded(0);
   adc1 = ads.readADC_SingleEnded(1);
-  Serial.print("A0: ");
-  Serial.println(ads.computeVolts(adc0 + 2));
-  Serial.print("A1: ");
-  Serial.println(ads.computeVolts(adc1));
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0,0); // column row
+  display.print("A0  d:");
+  display.setTextSize(1);
+  display.setCursor(45, 0);
+  display.print(adc0);
+  display.setTextSize(1);
+  display.setCursor(0,10); // column row
+  display.print("A0 mV:");
+  display.setTextSize(1);
+  display.setCursor(45, 10);
+  display.print(adc0*0.125);
+
+  display.setTextSize(1);
+  display.setCursor(0,20); // column row
+  display.print("A1  d:");
+  display.setTextSize(1);
+  display.setCursor(45, 20);
+  display.print(adc1);
+  display.setTextSize(1);
+  display.setCursor(0,30); // column row
+  display.print("A1 mV:");
+  display.setTextSize(1);
+  display.setCursor(45, 30);
+  display.print(adc1*0.125);
+
+  display.setTextSize(1);
+  display.setCursor(0,40);
+  display.print("Time:");
+  display.setTextSize(1);
+  display.setCursor(35, 40);
+  display.print((millis()-timeStart)/1000);    
+
+  display.setTextSize(1);
+  display.setCursor(0,50);
+  display.print("Min:");
+  display.setTextSize(1);
+  display.setCursor(35, 50);
+  display.print(minCount); 
+
+  display.display();
+  Serial.print("A0  d: ");
+  Serial.println(adc0);
+  Serial.print("A0 mV: ");
+  Serial.println(adc0*0.125); 
+  Serial.print("A1  d: ");
+  Serial.println(adc1);
+  Serial.print("A1 mV: ");
+  Serial.println(adc1*0.125);
   Serial.print("Time: ");
   Serial.println((millis()-timeStart)/1000);
   Serial.print("Min: ");
   Serial.println(minCount);
   Serial.println("............................"); 
-
 }
 
-
-  
+void nextMin(){
+  minCount ++;
 }
 
-void Oled_Display()
-{
-     // display on Oled display
-
-   // Oled display
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0,0); // column row
-  display.print("A0:");
-  display.setTextSize(1);
-  display.setCursor(25, 0);
-  display.print(ads.computeVolts(adc0 + 2));
-
-  display.setTextSize(1);
-  display.setCursor(0,10);
-  display.print("A1:");
-  display.setTextSize(1);
-  display.setCursor(25, 10);
-  display.print(ads.computeVolts(adc1));
-
-  display.setTextSize(1);
-  display.setCursor(0,20);
-  display.print("Time:");
-  display.setTextSize(1);
-  display.setCursor(35, 20);
-  display.print((millis()-timeStart)/1000);    
-
-  display.setTextSize(1);
-  display.setCursor(0,30);
-  display.print("Min:");
-  display.setTextSize(1);
-  display.setCursor(35, 30);
-  display.print(minCount); 
-
- display.display();
+void writeData() {
+  Serial.println("--------------------------");
+  Serial.println("Writing to SD Card");
+  Serial.println("--------------------------");
 }
