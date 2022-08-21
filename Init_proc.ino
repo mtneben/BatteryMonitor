@@ -1,4 +1,6 @@
+#include <ezButton.h>
 #include <Wire.h>
+#include <RunningMedian.h>
 #include <Adafruit_ADS1X15.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -6,43 +8,67 @@
 #include <SPI.h>
 #include <SD.h>
 
-SimpleTimer secondTimer;
-SimpleTimer minuteTimer;
-SimpleTimer tenMinuteTimer;
+SimpleTimer displayTimer;                        //Define timer for display update interval
+SimpleTimer minuteTimer;                         //Define timer for minute counter
+SimpleTimer writeDataTimer;                      //Define timer to write data to SD Card
+//SimpleTimer tenmsTimer;                          //Define timer to take samples for median calculation
+RunningMedian medianVoltage = RunningMedian(10);
+RunningMedian medianCurrent = RunningMedian(10);
+
+// Define push button pins
+ezButton setButton(0);
+ezButton modButton(2);
+
+File myFile;
 
 Adafruit_ADS1115 ads;
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
  
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
- long timeStart = 0;
- long minCount = 0;
- int16_t adc0, adc1, adc2, adc3;
+// long timeStart = 0;
+ long minCount = 0;                         //Define minute counter for displaying duration of test
+ long secCount = 0;                         //Define seconds counter for saving interval to SD card
+ int16_t adc01, adc23;                      //Define counters for readings from ADS1115
+ int starting = 0;                          //Define flag for init procedure, if running for the first time
+ int menuNumber = 1;                        //Define menu item used for display screen info
+ float minBatInfo[2] = {2.5, 2.75};         //Define min allowable voltage per battery type
+ float maxBatInfo[2] = {3.65 , 4.3};        //Define max allowable voltage per battery type
+ int numBat = 0;                            //Define counter to loop through batCount array
+ int batCount[4] = {1, 4, 8, 16};           //Define array containing number of battery string options
+ bool batType = false;                      //Define flag for selecting between different types of batteries
+ float volts, amps, minV, maxV, tempCurrent, tempVoltage;                         //Define calculated values for voltage and current
+ bool voltageError = false;
+ bool currentError = false;
+ String errorMessage = "";
  
 void setup(void) 
 {
   Serial.begin(9600);
   Wire.begin();
+  pinMode(3, OUTPUT);
+  delay(1000);
+  digitalWrite(3, LOW);
 
-  // Serial.print("Initializing SD card...");
+  Serial.print("Initializing SD card...");
 
-  // if (!SD.begin(15)) {
-  //   Serial.println("initialization failed!");
-  //   while (1);
-  // }
-  // Serial.println("initialization done.");
+  if (!SD.begin(15)) {
+    Serial.println("initialization failed!");
+    while (1);
+  }
+  Serial.println("initialization done.");
+
 
   //                                                                ADS1115
   //                                                                -------
   // ads.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit =  0.1875mV (default)    // activate this if you are using a 5V sensor, this one should  be used with Arduino boards
-  ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit =  0.125mV               // As the sensor is powered up using 3.3V, this one should be used with 3.3v controller boards
+//  ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit =  0.125mV               // As the sensor is powered up using 3.3V, this one should be used with 3.3v controller boards
   // ads.setGain(GAIN_TWO);        // 2x gain   +/- 2.048V  1 bit =  0.0625mV
   // ads.setGain(GAIN_FOUR);       // 4x gain   +/- 1.024V  1 bit =  0.03125mV
   // ads.setGain(GAIN_EIGHT);      // 8x gain   +/- 0.512V  1 bit =  0.015625mV
-  // ads.setGain(GAIN_SIXTEEN);    // 16x gain  +/- 0.256V  1 bit =  0.0078125mV
+   ads.setGain(GAIN_SIXTEEN);    // 16x gain  +/- 0.256V  1 bit =  0.0078125mV
   
   ads.begin();
 
@@ -50,86 +76,355 @@ void setup(void)
   display.clearDisplay();
   display.setTextColor(WHITE);
 
-  secondTimer.setInterval(2000L, Oled_Display);
-  minuteTimer.setInterval(60000L, nextMin);
-  tenMinuteTimer.setInterval(600000L, writeData);
-  timeStart = millis();
+  setButton.setDebounceTime(20); // set debounce time to 50 milliseconds
+  modButton.setDebounceTime(20); // set debounce time to 50 milliseconds
+
+  displayTimer.setInterval(300L, Oled_Display);         //Adjust update interval of display Timer ro 500ms
+  minuteTimer.setInterval(60000L, nextMin);             //Adjust interval of minute Timer to 1min
+  writeDataTimer.setInterval(1000L, writeData);         //Adjust the interval to write data to the SD Card to 1sec
+//  tenmsTimer.setInterval(500L, saveMedian);             //Adjust the interval for 10ms interval samples for median calculation
+  delay(500);
 
 }
 
 void loop(void) {
-  secondTimer.run();
-  minuteTimer.run();
-  tenMinuteTimer.run();
+//  tenmsTimer.run();
+
+
+  displayTimer.run();
+  setButton.loop();
+  modButton.loop();
+  if(setButton.isReleased()){
+    if(menuNumber >= 4){
+      Serial.println("SET button pressed befond MENU 4. Do nothing!!!");
+    } else {
+    menuNumber ++;
+    Serial.print("Menu changed to ");
+    Serial.println(menuNumber);
+    }
+    }
+  if (modButton.isReleased()){                                             //MOD button press functions Start
+      if (menuNumber == 1){                                               //
+        batType = !batType;                                               //
+        if (batType){                                                     //
+          Serial.println("BAT changed from LPF to MNC");                  //
+        }                                                                 //
+        else {                                                            //
+          Serial.println("BAT changed from MNC to LPF");                  //
+        }                                                                 //
+      }                                                                   //
+      if (menuNumber == 2){                                               //
+        if (numBat == 3){                                                 //
+          numBat = 0;                                                     //
+        } 
+        else {
+          numBat ++;
+        }
+        Serial.print("BAT number changed to ");                           //
+        Serial.println(batCount[numBat]);                                 //
+      }                                                                   //
+  }                                                                       //MOD button press functions End
+  if (menuNumber == 4){ 
+    if (starting == 0){
+      initSdCard();
+    }
+    minuteTimer.run();
+    writeDataTimer.run();
+    }
+  if (voltageError == true) {
+    menuNumber = 6;
+    }
+ 
+  if (currentError == true){
+    errorMessage = "Current ";
+    errorMessage.concat(String(amps));
+    errorMessage.concat(" out of range");  
+    menuNumber = 6;
+  }
 }
-
-void Oled_Display()
-{
-  adc0 = ads.readADC_SingleEnded(0);
-  adc1 = ads.readADC_SingleEnded(1);
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0,0); // column row
-  display.print("A0  d:");
-  display.setTextSize(1);
-  display.setCursor(45, 0);
-  display.print(adc0);
-  display.setTextSize(1);
-  display.setCursor(0,10); // column row
-  display.print("A0 mV:");
-  display.setTextSize(1);
-  display.setCursor(45, 10);
-  display.print(adc0*0.125);
-
-  display.setTextSize(1);
-  display.setCursor(0,20); // column row
-  display.print("A1  d:");
-  display.setTextSize(1);
-  display.setCursor(45, 20);
-  display.print(adc1);
-  display.setTextSize(1);
-  display.setCursor(0,30); // column row
-  display.print("A1 mV:");
-  display.setTextSize(1);
-  display.setCursor(45, 30);
-  display.print(adc1*0.125);
-
-  display.setTextSize(1);
-  display.setCursor(0,40);
-  display.print("Time:");
-  display.setTextSize(1);
-  display.setCursor(35, 40);
-  display.print((millis()-timeStart)/1000);    
-
-  display.setTextSize(1);
-  display.setCursor(0,50);
-  display.print("Min:");
-  display.setTextSize(1);
-  display.setCursor(35, 50);
-  display.print(minCount); 
-
-  display.display();
-  Serial.print("A0  d: ");
-  Serial.println(adc0);
-  Serial.print("A0 mV: ");
-  Serial.println(adc0*0.125); 
-  Serial.print("A1  d: ");
-  Serial.println(adc1);
-  Serial.print("A1 mV: ");
-  Serial.println(adc1*0.125);
-  Serial.print("Time: ");
-  Serial.println((millis()-timeStart)/1000);
-  Serial.print("Min: ");
-  Serial.println(minCount);
-  Serial.println("............................"); 
+void Oled_Display(){
+  
+  if (menuNumber == 1){
+    digitalWrite(3, LOW);
+    displayMenu1();}
+  else if (menuNumber == 2){
+    digitalWrite(3, LOW);
+    displayMenu2();}  
+  else if (menuNumber == 3){
+    digitalWrite(3, LOW);
+    displayMenu3();} 
+  else if (menuNumber == 4){
+    saveMedian();
+    isInRange();  
+    digitalWrite(3, HIGH);
+    displayMenu4();}
+  else if (menuNumber == 5){
+    digitalWrite(3, LOW);
+    displayMenu5();}    
+  else if (menuNumber == 6){
+    digitalWrite(3, LOW);
+    displayMenu6();} 
 }
 
 void nextMin(){
   minCount ++;
+  Serial.println("nextMin function run");
 }
 
 void writeData() {
-  Serial.println("--------------------------");
+  secCount ++;
+
   Serial.println("Writing to SD Card");
-  Serial.println("--------------------------");
+  //open file
+  myFile=SD.open("DATA.csv", FILE_WRITE);
+
+  // if the file opened ok, write to it:
+  if (myFile) {
+    myFile.print(secCount);
+    myFile.print(",");
+    myFile.print(amps);
+    myFile.print(",");
+    myFile.print(volts);
+    myFile.print(",");
+    myFile.println(amps*volts);    
+    // myFile.print(",");        
+  }
+  myFile.close();  
+}
+
+void initSdCard(){
+      minV = minBatInfo[batType];
+      maxV = maxBatInfo[batType];
+      minV = minV * batCount[numBat];
+      maxV = maxV * batCount[numBat];
+      if (SD.exists("DATA.csv")) {
+      Serial.println("DATA.csv exists.");
+      SD.remove("DATA.csv");
+      Serial.println("DATA.csv removed!");
+    }
+    myFile=SD.open("DATA.csv", FILE_WRITE);
+
+    // if the file opened ok, write to it:
+    if (myFile) {
+      Serial.println("File opened ok");
+      // print the headings for our data
+      myFile.println("Time Elapsed(s),Amps(A),Volts(V), Power(W)");
+    }
+    myFile.close(); 
+    starting = 1;
+}
+
+void displayMenu1(){
+  display.clearDisplay();
+  display.setCursor(40,0); // column row
+  display.print("PAGE 1");
+  display.setCursor(0,10); // column row
+  display.print("Cell type Selected:");
+  display.setCursor(0,20); // column row
+  if (batType){
+    display.print("NMC");
+  }
+  else {
+    display.print("LPF");
+  }
+  
+  display.setCursor(0,30); // column row
+  display.print("Is this CORRECT?");    
+  display.setCursor(0,40); // column row
+  display.print("MOD -> change"); 
+  display.setCursor(0,50); // column row
+  display.print("SET -> Next");   
+  display.display();
+}
+
+void displayMenu2() {
+  display.clearDisplay();
+  display.setCursor(40,0); // column row
+  display.print("PAGE 2");
+  display.setCursor(0,10); // column row
+  display.print("Number of Cells:");
+  display.setCursor(40,20); // column row
+  display.print(batCount[numBat]);
+  display.setCursor(0,30); // column row
+  display.print("MOD -> change"); 
+  display.setCursor(0,40); // column row
+  display.print("SET -> Next"); 
+
+  display.display();  
+}
+
+void displayMenu3Error() {
+  display.clearDisplay();
+  display.setCursor(40,0); // column row
+  display.print("PAGE 3");
+  display.setCursor(0,10); // column row
+  display.print("You have selected:");
+  display.setCursor(0,20); // column row
+  display.print(batCount[numBat]);
+  display.setCursor(10,20); // column row
+  display.print("x");    
+  display.setCursor(20,20); // column row
+  if (batType == 0){display.print("LFP");}
+  else {display.print("MNC");} 
+  float tempVolt = ads.readADC_Differential_2_3();
+  tempVolt = tempVolt / 96;
+  display.setCursor(60,20); // column row
+  display.print("V= "); 
+  display.setCursor(75,20); // column row
+  display.print(tempVolt);     
+  display.setCursor(0,30); // column row
+  display.print("RESTART -> change"); 
+  display.setCursor(0,40); // column row
+  display.print("SET -> Start"); 
+  display.display();  
+}
+
+void displayMenu3() {
+  display.clearDisplay();
+  float tempVolt = ads.readADC_Differential_2_3();
+  tempVolt = tempVolt / 96;  
+  String tempVoltString = String(tempVolt);
+  tempVoltString.concat(" V");
+  float tempAmp = ads.readADC_Differential_0_1();
+  tempAmp = tempAmp / 96;  
+  String tempAmpString = String(tempAmp);
+  tempAmpString.concat(" A");  
+  display.setCursor(0,0); // column row
+  display.print("Voltage reading=");
+  display.setCursor(20,10); // column row
+  display.print(tempVoltString);   
+  display.setCursor(80,10); // column row
+  display.print(tempAmpString);   
+  display.setCursor(0,20); // column row
+  display.print(batCount[numBat]);
+  display.setCursor(15,20); // column row
+  display.print("x");    
+  display.setCursor(25,20); // column row
+  if (batType == 0){display.print("LFP");}
+  else {display.print("MNC");} 
+  display.setCursor(50,20); // column row
+  display.print("should read"); 
+  display.setCursor(0,30); // column row
+  float minV = minBatInfo[batType];
+  float maxV = maxBatInfo[batType];
+  minV = minV * batCount[numBat];
+  maxV = maxV * batCount[numBat];
+  String rangeV = String(minV);
+  rangeV.concat(" - ");
+  rangeV.concat(String(maxV));
+  rangeV.concat(" V");
+  display.print(rangeV);   
+  display.setCursor(0,40); // column row
+  display.print("RESTART AND");   
+  display.setCursor(0,50); // column row
+  display.print("TRY AGAIN!!!");    
+  display.display();  
+}
+
+void displayMenu4() {
+//  saveMedian();
+//  isInRange();
+  display.clearDisplay();
+  display.setCursor(0,0); // column row
+  display.print("RUNNING!!!:");
+  display.setCursor(0,10); // column row
+  display.print("Voltage:");
+  display.setCursor(55,10); // column row
+  String voltString = String(volts);
+  voltString.concat(" V");
+  display.print(voltString);
+  display.setCursor(0,20); // column row
+  display.print("Current:");    
+  display.setCursor(55,20); // column row
+  String ampString = String(amps);
+  ampString.concat(" A");  
+  display.print(ampString);
+  display.setCursor(0,30); // column row
+  display.print("Power:");    
+  display.setCursor(55,30); // column row
+  String powString = String(volts*amps);
+  powString.concat(" W");  
+  display.print(powString);   
+  display.setCursor(0,40); // column row
+  display.print("Time:"); 
+  display.setCursor(55,40); // column row
+  String timeString = String(minCount);
+  timeString.concat(" min");    
+  display.print(timeString);
+  display.setCursor(0,50); // column row
+  display.print("SET -> Emergency Stop");   
+  display.display();    
+}
+
+void displayMenu5() {
+  display.clearDisplay();
+  display.setCursor(40,0); // column row
+  display.print("DONE!!!");
+  display.setCursor(0,10); // column row
+  display.print("Discharge complete.");
+  display.setCursor(0,20); // column row
+  display.print("Total Time:");
+  String timeString = String(minCount);
+  timeString.concat(" min");   
+  display.setCursor(70,20); // column row
+  display.print(timeString);    
+  display.setCursor(0,30); // column row
+  display.print("Remove SD Card"); 
+  display.setCursor(0,40); // column row
+  display.print("and save data"); 
+  display.display();    
+}
+
+void displayMenu6() {
+  display.clearDisplay();
+  display.setCursor(40,0); // column row
+  display.print("FAIL!!!");
+  display.setCursor(0,10); // column row
+  display.print("Discharge Terminated");
+  display.setCursor(0,20); // column row
+  display.print("due to safety reasons");
+  display.setCursor(0,30); // column row
+  display.print(errorMessage); 
+  display.display();    
+}
+
+void saveMedian() {
+  adc01 = ads.readADC_Differential_0_1();
+  adc23 = ads.readADC_Differential_2_3();
+  medianCurrent.add(adc01);
+  medianVoltage.add(adc23);
+   
+
+}
+
+void isInRange() {
+  tempCurrent = medianCurrent.getMedian();
+  tempVoltage = medianVoltage.getMedian();
+  amps = tempCurrent / 96;//75mv shunt 
+  volts = tempVoltage / 96;//75mv shunt    
+  if (volts < minV){
+    if (menuNumber == 4){
+      Serial.println("Test Complete");
+      menuNumber = 5;
+    } else{
+    Serial.println("Voltage below limit");
+    errorMessage = "Voltage ";
+    errorMessage.concat(String(volts));
+    errorMessage.concat(" < ");
+    errorMessage.concat(minV);
+    voltageError = true;
+    }
+  }
+  if (volts > maxV){
+    Serial.println("Voltage above limit");
+    errorMessage = "Voltage ";
+    errorMessage.concat(String(volts));
+    errorMessage.concat(" > ");
+    errorMessage.concat(maxV);
+    voltageError = true;
+  }  
+  if (volts*amps > 300){
+    Serial.println("Power below limit");
+    currentError = true;
+}
 }
