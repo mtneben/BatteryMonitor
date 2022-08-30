@@ -35,7 +35,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
  int starting = 0;                          //Define flag for init procedure, if running for the first time
  int menuNumber = 1;                        //Define menu item used for display screen info
  float minBatInfo[2] = {2.5, 2.75};         //Define min allowable voltage per battery type
- float maxBatInfo[2] = {3.65 , 4.3};        //Define max allowable voltage per battery type
+ float maxBatInfo[2] = {3.8 , 4.3};        //Define max allowable voltage per battery type
  int numBat = 0;                            //Define counter to loop through batCount array
  int batCount[4] = {1, 4, 8, 16};           //Define array containing number of battery string options
  bool batType = false;                      //Define flag for selecting between different types of batteries
@@ -253,7 +253,7 @@ void displayMenu2() {
   display.display();  
 }
 
-void displayMenu3Error() {
+void displayMenu3() {
   display.clearDisplay();
   display.setCursor(40,0); // column row
   display.print("PAGE 3");
@@ -261,25 +261,31 @@ void displayMenu3Error() {
   display.print("You have selected:");
   display.setCursor(0,20); // column row
   display.print(batCount[numBat]);
-  display.setCursor(10,20); // column row
+  display.setCursor(15,20); // column row
   display.print("x");    
-  display.setCursor(20,20); // column row
+  display.setCursor(25,20); // column row
   if (batType == 0){display.print("LFP");}
   else {display.print("MNC");} 
   float tempVolt = ads.readADC_Differential_2_3();
-  tempVolt = tempVolt / 96;
-  display.setCursor(60,20); // column row
-  display.print("V= "); 
-  display.setCursor(75,20); // column row
-  display.print(tempVolt);     
+  tempVolt = tempVolt / 96;  
+  String tempVoltString = String(tempVolt);
+  tempVoltString.concat("V");
+  float tempAmp = ads.readADC_Differential_0_1();
+  tempAmp = tempAmp / 96;  
+  String tempAmpString = String(tempAmp);
+  tempAmpString.concat("A");
   display.setCursor(0,30); // column row
-  display.print("RESTART -> change"); 
+  display.print("RESTART -> Change"); 
   display.setCursor(0,40); // column row
   display.print("SET -> Start"); 
+  display.setCursor(10,50);
+  display.print(tempVoltString);
+  display.setCursor(70,50);
+  display.print(tempAmpString);  
   display.display();  
 }
 
-void displayMenu3() {
+void displayMenu3Error() {
   display.clearDisplay();
   float tempVolt = ads.readADC_Differential_2_3();
   tempVolt = tempVolt / 96;  
