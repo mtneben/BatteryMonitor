@@ -11,7 +11,6 @@
 SimpleTimer displayTimer;                        //Define timer for display update interval
 SimpleTimer minuteTimer;                         //Define timer for minute counter
 SimpleTimer writeDataTimer;                      //Define timer to write data to SD Card
-//SimpleTimer tenmsTimer;                          //Define timer to take samples for median calculation
 RunningMedian medianVoltage = RunningMedian(10);
 RunningMedian medianCurrent = RunningMedian(10);
 
@@ -33,13 +32,13 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
  long secCount = 0;                         //Define seconds counter for saving interval to SD card
  int16_t adc01, adc23;                      //Define counters for readings from ADS1115
  int starting = 0;                          //Define flag for init procedure, if running for the first time
- int menuNumber = 1;                        //Define menu item used for display screen info
+ int menuNumber = 0;                        //Define menu item used for display screen info
  float minBatInfo[2] = {2.5, 2.75};         //Define min allowable voltage per battery type
  float maxBatInfo[2] = {3.8 , 4.3};        //Define max allowable voltage per battery type
  int numBat = 0;                            //Define counter to loop through batCount array
  int batCount[4] = {1, 4, 8, 16};           //Define array containing number of battery string options
  bool batType = false;                      //Define flag for selecting between different types of batteries
- float volts, amps, minV, maxV, tempCurrent, tempVoltage;                         //Define calculated values for voltage and current
+ float instVolt, instAmp, instPow, volts, amps, minV, maxV, tempCurrent, tempVoltage, tempPower;                         //Define calculated values for voltage and current
  bool voltageError = false;
  bool currentError = false;
  String errorMessage = "";
@@ -52,13 +51,13 @@ void setup(void)
   delay(1000);
   digitalWrite(3, LOW);
 
-  Serial.print("Initializing SD card...");
+  // Serial.print("Initializing SD card...");
 
-  if (!SD.begin(15)) {
-    Serial.println("initialization failed!");
-    while (1);
-  }
-  Serial.println("initialization done.");
+  // if (!SD.begin(15)) {
+  //   Serial.println("initialization failed!");
+  //   while (1);
+  // }
+  // Serial.println("initialization done.");
 
 
   //                                                                ADS1115
@@ -88,9 +87,9 @@ void setup(void)
 }
 
 void loop(void) {
-//  tenmsTimer.run();
-
-
+  if (SD.begin(15)) {
+    menuNumber = 1;
+  }
   displayTimer.run();
   setButton.loop();
   modButton.loop();
@@ -136,15 +135,15 @@ void loop(void) {
     }
  
   if (currentError == true){
-    errorMessage = "Current ";
-    errorMessage.concat(String(amps));
-    errorMessage.concat(" out of range");  
-    menuNumber = 6;
+  menuNumber = 6;
   }
 }
 void Oled_Display(){
-  
-  if (menuNumber == 1){
+  readData();
+  if (menuNumber == 0){
+    digitalWrite(3, LOW);
+    displayMenu0();}
+  else if (menuNumber == 1){
     digitalWrite(3, LOW);
     displayMenu1();}
   else if (menuNumber == 2){
@@ -211,16 +210,30 @@ void initSdCard(){
       myFile.println("Time Elapsed(s),Amps(A),Volts(V), Power(W)");
     }
     myFile.close(); 
+    minCount = 0;
     starting = 1;
 }
 
+void displayMenu0(){
+  display.clearDisplay();
+  display.setCursor(40,0);
+  display.print("ERROR!!!");
+  display.setCursor(0,10);
+  display.print("SD Card Error!!!");
+  display.setCursor(0,20);
+  display.print("Please check SD Card");
+  display.setCursor(0, 30);
+  display.print("and re-insert");
+  display.display();
+  }
+
 void displayMenu1(){
   display.clearDisplay();
-  display.setCursor(40,0); // column row
+  display.setCursor(40,0);
   display.print("PAGE 1");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("Cell type Selected:");
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   if (batType){
     display.print("NMC");
   }
@@ -228,55 +241,50 @@ void displayMenu1(){
     display.print("LPF");
   }
   
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   display.print("Is this CORRECT?");    
-  display.setCursor(0,40); // column row
-  display.print("MOD -> change"); 
-  display.setCursor(0,50); // column row
+  display.setCursor(0,40);
+  display.print("MOD -> Change"); 
+  display.setCursor(0,50);
   display.print("SET -> Next");   
   display.display();
 }
 
 void displayMenu2() {
   display.clearDisplay();
-  display.setCursor(40,0); // column row
+  display.setCursor(40,0);
   display.print("PAGE 2");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("Number of Cells:");
-  display.setCursor(40,20); // column row
+  display.setCursor(40,20);
   display.print(batCount[numBat]);
-  display.setCursor(0,30); // column row
-  display.print("MOD -> change"); 
-  display.setCursor(0,40); // column row
+  display.setCursor(0,30);
+  display.print("MOD -> Change"); 
+  display.setCursor(0,40);
   display.print("SET -> Next"); 
-
   display.display();  
 }
 
 void displayMenu3() {
   display.clearDisplay();
-  display.setCursor(40,0); // column row
+  display.setCursor(40,0);
   display.print("PAGE 3");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("You have selected:");
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   display.print(batCount[numBat]);
-  display.setCursor(15,20); // column row
+  display.setCursor(15,20);
   display.print("x");    
-  display.setCursor(25,20); // column row
+  display.setCursor(25,20);
   if (batType == 0){display.print("LFP");}
   else {display.print("MNC");} 
-  float tempVolt = ads.readADC_Differential_2_3();
-  tempVolt = tempVolt / 96;  
-  String tempVoltString = String(tempVolt);
+  String tempVoltString = String(instVolt);
   tempVoltString.concat("V");
-  float tempAmp = ads.readADC_Differential_0_1();
-  tempAmp = tempAmp / 96;  
-  String tempAmpString = String(tempAmp);
+  String tempAmpString = String(instAmp);
   tempAmpString.concat("A");
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   display.print("RESTART -> Change"); 
-  display.setCursor(0,40); // column row
+  display.setCursor(0,40);
   display.print("SET -> Start"); 
   display.setCursor(10,50);
   display.print(tempVoltString);
@@ -287,30 +295,26 @@ void displayMenu3() {
 
 void displayMenu3Error() {
   display.clearDisplay();
-  float tempVolt = ads.readADC_Differential_2_3();
-  tempVolt = tempVolt / 96;  
-  String tempVoltString = String(tempVolt);
-  tempVoltString.concat(" V");
-  float tempAmp = ads.readADC_Differential_0_1();
-  tempAmp = tempAmp / 96;  
-  String tempAmpString = String(tempAmp);
-  tempAmpString.concat(" A");  
-  display.setCursor(0,0); // column row
+  String tempVoltString = String(instVolt);
+  tempVoltString.concat("V");
+  String tempAmpString = String(instAmp);
+  tempAmpString.concat("A");  
+  display.setCursor(0,0);
   display.print("Voltage reading=");
-  display.setCursor(20,10); // column row
+  display.setCursor(20,10);
   display.print(tempVoltString);   
-  display.setCursor(80,10); // column row
+  display.setCursor(80,10);
   display.print(tempAmpString);   
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   display.print(batCount[numBat]);
-  display.setCursor(15,20); // column row
+  display.setCursor(15,20);
   display.print("x");    
-  display.setCursor(25,20); // column row
+  display.setCursor(25,20);
   if (batType == 0){display.print("LFP");}
   else {display.print("MNC");} 
-  display.setCursor(50,20); // column row
+  display.setCursor(50,20);
   display.print("should read"); 
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   float minV = minBatInfo[batType];
   float maxV = maxBatInfo[batType];
   minV = minV * batCount[numBat];
@@ -320,117 +324,128 @@ void displayMenu3Error() {
   rangeV.concat(String(maxV));
   rangeV.concat(" V");
   display.print(rangeV);   
-  display.setCursor(0,40); // column row
+  display.setCursor(0,40);
   display.print("RESTART AND");   
-  display.setCursor(0,50); // column row
+  display.setCursor(0,50);
   display.print("TRY AGAIN!!!");    
   display.display();  
 }
 
 void displayMenu4() {
-//  saveMedian();
-//  isInRange();
   display.clearDisplay();
-  display.setCursor(0,0); // column row
+  display.setCursor(0,0);
   display.print("RUNNING!!!:");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("Voltage:");
-  display.setCursor(55,10); // column row
-  String voltString = String(volts);
+  display.setCursor(55,10);
+  String voltString = String(instVolt);
   voltString.concat(" V");
   display.print(voltString);
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   display.print("Current:");    
-  display.setCursor(55,20); // column row
-  String ampString = String(amps);
+  display.setCursor(55,20);
+  String ampString = String(instAmp);
   ampString.concat(" A");  
   display.print(ampString);
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   display.print("Power:");    
-  display.setCursor(55,30); // column row
-  String powString = String(volts*amps);
+  display.setCursor(55,30);
+  String powString = String(instPow);
   powString.concat(" W");  
   display.print(powString);   
-  display.setCursor(0,40); // column row
+  display.setCursor(0,40);
   display.print("Time:"); 
-  display.setCursor(55,40); // column row
+  display.setCursor(55,40);
   String timeString = String(minCount);
   timeString.concat(" min");    
   display.print(timeString);
-  display.setCursor(0,50); // column row
+  display.setCursor(0,50);
   display.print("SET -> Emergency Stop");   
   display.display();    
 }
 
 void displayMenu5() {
   display.clearDisplay();
-  display.setCursor(40,0); // column row
+  display.setCursor(40,0);
   display.print("DONE!!!");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("Discharge complete.");
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   display.print("Total Time:");
   String timeString = String(minCount);
   timeString.concat(" min");   
-  display.setCursor(70,20); // column row
+  display.setCursor(70,20);
   display.print(timeString);    
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   display.print("Remove SD Card"); 
-  display.setCursor(0,40); // column row
+  display.setCursor(0,40);
   display.print("and save data"); 
   display.display();    
 }
 
 void displayMenu6() {
   display.clearDisplay();
-  display.setCursor(40,0); // column row
+  display.setCursor(40,0);
   display.print("FAIL!!!");
-  display.setCursor(0,10); // column row
+  display.setCursor(0,10);
   display.print("Discharge Terminated");
-  display.setCursor(0,20); // column row
+  display.setCursor(0,20);
   display.print("due to safety reasons");
-  display.setCursor(0,30); // column row
+  display.setCursor(0,30);
   display.print(errorMessage); 
   display.display();    
 }
 
-void saveMedian() {
-  adc01 = ads.readADC_Differential_0_1();
-  adc23 = ads.readADC_Differential_2_3();
-  medianCurrent.add(adc01);
-  medianVoltage.add(adc23);
-   
+void readData(){
+  instAmp = float(ads.readADC_Differential_0_1())/96;
+  instVolt = float(ads.readADC_Differential_2_3())/96;
+  instPow = instAmp*instVolt;
+}
 
+void saveMedian() {
+  medianCurrent.add(instAmp);
+  medianVoltage.add(instVolt);
 }
 
 void isInRange() {
   tempCurrent = medianCurrent.getMedian();
   tempVoltage = medianVoltage.getMedian();
-  amps = tempCurrent / 96;//75mv shunt 
-  volts = tempVoltage / 96;//75mv shunt    
-  if (volts < minV){
+  tempPower = tempCurrent*tempVoltage;
+  if (tempVoltage < minV){
     if (menuNumber == 4){
       Serial.println("Test Complete");
       menuNumber = 5;
     } else{
     Serial.println("Voltage below limit");
     errorMessage = "Voltage ";
-    errorMessage.concat(String(volts));
+    errorMessage.concat(String(tempVoltage));
     errorMessage.concat(" < ");
     errorMessage.concat(minV);
     voltageError = true;
     }
   }
-  if (volts > maxV){
+  if (tempVoltage > maxV){
     Serial.println("Voltage above limit");
     errorMessage = "Voltage ";
-    errorMessage.concat(String(volts));
+    errorMessage.concat(String(tempVoltage));
     errorMessage.concat(" > ");
     errorMessage.concat(maxV);
     voltageError = true;
   }  
-  if (volts*amps > 300){
-    Serial.println("Power below limit");
+  if (tempPower > 400){
+    Serial.println("Power above limit");
+    errorMessage = "Power ";
+    errorMessage.concat(String(tempPower));
+    errorMessage.concat(" > ");
+    errorMessage.concat("400");
+    currentError = true;
+}
+  if (tempCurrent > 100){
+    Serial.println("Current above limit");
+    errorMessage = "Current ";
+    errorMessage.concat(String(tempCurrent));
+    errorMessage.concat(" > ");
+    errorMessage.concat("100");
     currentError = true;
 }
 }
