@@ -87,8 +87,9 @@ void setup(void)
 }
 
 void loop(void) {
-  if (SD.begin(15)) {
-    menuNumber = 1;
+  if(menuNumber == 0){
+    if (SD.begin(15)) {
+    menuNumber = 1;}
   }
   displayTimer.run();
   setButton.loop();
