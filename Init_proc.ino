@@ -94,7 +94,7 @@ void loop(void) {
   displayTimer.run();
   setButton.loop();
   modButton.loop();
-  if(setButton.isReleased()){
+  if(setButton.isPressed()){
     if(menuNumber >= 4){
       Serial.println("SET button pressed befond MENU 4. Do nothing!!!");
     } else {
@@ -103,7 +103,7 @@ void loop(void) {
     Serial.println(menuNumber);
     }
     }
-  if (modButton.isReleased()){                                             //MOD button press functions Start
+  if (modButton.isPressed()){                                             //MOD button press functions Start
       if (menuNumber == 1){                                               //
         batType = !batType;                                               //
         if (batType){                                                     //
