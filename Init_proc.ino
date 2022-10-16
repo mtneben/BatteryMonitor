@@ -182,11 +182,11 @@ void writeData() {
   if (myFile) {
     myFile.print(secCount);
     myFile.print(",");
-    myFile.print(amps);
+    myFile.print(tempCurrent);
     myFile.print(",");
-    myFile.print(volts);
+    myFile.print(tempVoltage);
     myFile.print(",");
-    myFile.println(amps*volts);    
+    myFile.println(tempPower);    
     // myFile.print(",");        
   }
   myFile.close();  
